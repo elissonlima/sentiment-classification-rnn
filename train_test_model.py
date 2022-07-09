@@ -3,70 +3,59 @@ import matplotlib.pyplot as plt
 import math
 
 from sklearn.metrics import mean_squared_error
-
-from rnn import train, hidden_dim, seq_len, sigmoid, output_dim
-
-sin_wave = np.array([math.sin(x) for x in range(200)])
-
-#training data
-X = []
-Y = []
-num_records = len(sin_wave) - seq_len # 150
-
-# X entries are 50 data points
-# Y entries are the 51st data point
-
-for i in range(num_records - 50):
-    X.append(sin_wave[i:i+seq_len])
-    Y.append(sin_wave[i+seq_len])
-
-X = np.expand_dims(np.array(X), axis=2) # 100 x 50 x 1
-Y = np.expand_dims(np.array(Y), axis=1) # 100 x 1
+from rnn import RNN
 
 
-# validation data
-X_validation = []
-Y_validation = []
-for i in range(num_records-seq_len, num_records):
-    X_validation.append(sin_wave[i:i+seq_len])
-    Y_validation.append(sin_wave[i+seq_len])
- 
-X_validation = np.expand_dims(np.array(X_validation), axis=2)
-Y_validation = np.expand_dims(np.array(Y_validation), axis=1)
+def build_dataset(sequence_len):   
+
+    sin_wave = np.array([math.sin(x) for x in range(200)])
+
+    #training data
+    X = []
+    Y = []
+    num_records = len(sin_wave) - sequence_len # 150
+
+    # X entries are 50 data points
+    # Y entries are the 51st data point
+
+    for i in range(num_records - 50):
+        X.append(sin_wave[i:i+sequence_len])
+        Y.append(sin_wave[i+sequence_len])
+
+    X = np.expand_dims(np.array(X), axis=2) # 100 x 50 x 1
+    Y = np.expand_dims(np.array(Y), axis=1) # 100 x 1
 
 
-# Crate RNN Model
-np.random.seed(12161)
-U = np.random.uniform(0, 1, (hidden_dim, seq_len)) # weights from input to hidden layer
-V = np.random.uniform(0, 1, (output_dim, hidden_dim)) # weights from hidden to output layer
-W = np.random.uniform(0, 1, (hidden_dim, hidden_dim)) # recurrent weights for layer (RNN weigts)
+    # validation data
+    X_validation = []
+    Y_validation = []
+    for i in range(num_records-sequence_len, num_records):
+        X_validation.append(sin_wave[i:i+sequence_len])
+        Y_validation.append(sin_wave[i+sequence_len])
+    
+    X_validation = np.expand_dims(np.array(X_validation), axis=2)
+    Y_validation = np.expand_dims(np.array(Y_validation), axis=1)
+
+    return X, Y, X_validation, Y_validation
 
 
-U, V, W = train(U, V, W, X, Y, X_validation, Y_validation)
+if __name__ == '__main__':
 
+    sequence_len = 50
+    hidden_dim = 100
+    output_dim = 1
+    epochs = 25
 
-# predictions on the training set
-predictions = []
-for i in range(Y.shape[0]):
-    x, y = X[i], Y[i]
-    prev_activation = np.zeros((hidden_dim,1))
-    # forward pass
+    X, Y, X_validation, Y_validation = build_dataset(sequence_len)
 
-    for timestep in range(seq_len):
-        mul_u = np.dot(U, x)
-        mul_w = np.dot(W, prev_activation)
-        _sum = mul_u + mul_w
+    model = RNN(sequence_len, hidden_dim, output_dim)
+    model.fit(X,Y, epochs, 
+        X_validation=X_validation, Y_validation=Y_validation)
 
-        activation = sigmoid(_sum)
-        mul_v = np.dot(V, activation)
-        prev_activation = activation
-
-    predictions.append(mul_v)
-
-
-predictions = np.array(predictions)
-
-plt.plot(predictions[:, 0,0], 'g')
-plt.plot(Y[:, 0], 'r')
-plt.title("Training Data Predictions in Green, Actual in Red")
-plt.show()
+    # predictions on the training set
+    predictions = model.predict(X)
+    
+    plt.plot(predictions[:, 0,0], 'g')
+    plt.plot(Y[:, 0], 'r')
+    plt.title("Training Data Predictions in Green, Actual in Red")
+    plt.show()

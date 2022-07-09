@@ -1,213 +1,285 @@
 import numpy as np
-import math
-
-# create RNN architecture
-learning_rate = 0.0001
-seq_len = 50
-max_epochs = 25
-hidden_dim = 100
-output_dim = 1
-bptt_truncate = 5 # backprop through time --> lasts 5 interations
-min_clip_val = -10
-max_clip_val = 10
 
 def sigmoid(x):
     return 1/(1+np.exp(-x))
 
-"""
-    X -> [Matrix] Data 
-    Y -> [Matrix] Output 
-    U -> [Matrix] Weights from the input layer to the hidden layer
-    V -> [Matrix] Weights from the hidden layer to the output Layer
-    W -> [Matrix] Recurrent weights from the hidden layer to itself
-"""
-def calculate_loss(X, Y, U, V, W):
-    
-    loss = 0.0
+def sigmoid_prime(x):
+    return x * (1 - x)
 
-    for i in range(Y.shape[0]):
+def squared_error(y, y_pred):
+    return float((y - y_pred) ** 2/2)
 
-        x, y = X[i], Y[i]
-        prev_activation = np.zeros((hidden_dim, 1)) # value of previous
-                                                    # activation
-        
-        for timestep in range(seq_len):
+class RNN():
 
-            new_input = np.zeros(x.shape) # forward pass, done for each 
-                                          # step in the sequence
+    bptt_truncate = 5 # backprop through time --> lasts 5 interations
+    min_clip_val = -10
+    max_clip_val = 10   
 
-            new_input[timestep] = x[timestep] # define a single 
-                                              # input for that timestep
+    def __init__(self, sequence_len, hidden_dim_len, output_len):
 
-            mul_u = np.dot(U, new_input)
-            mul_w = np.dot(W, prev_activation)
+        # Crate RNN Model
+        np.random.seed(12161)
 
-            _sum = mul_u + mul_w
+        # weights from input to hidden layer
+        self.U = np.random.uniform(0, 1, (hidden_dim_len, sequence_len))
+        # weights from hidden to output layer
+        self.V = np.random.uniform(0, 1, (output_len, hidden_dim_len))
+        # recurrent weights for layer (RNN weigts)
+        self.W = np.random.uniform(0, 1, (hidden_dim_len, hidden_dim_len))
 
-            activation = sigmoid(_sum)
-
-            mul_v = np.dot(V, activation)
-
-            prev_activation = activation
-
-        loss_per_record = float((y - mul_v) ** 2/2)
-        loss += loss_per_record
-    
-    return loss, activation
+        self.sequence_len = sequence_len
 
 
-"""
-    x -> [Vector] Input for this data point 
-    U -> [Matrix] Weights from the input layer to the hidden layer
-    V -> [Matrix] Weights from the hidden layer to the output Layer
-    W -> [Matrix] Recurrent weights from the hidden layer to itself
-    prev_activation -> [Matrix] Previous activation for the final layer
-"""
-def calc_timestep_activation(x, U, V, W, prev_activation):
-    timesteps_activations = []
+    def forward(self, x, prev_activation=None):
+        '''
+            Caculate activations of each timestep and returns activate of each
+            timestep and matrixes of last timestep need for backpropagation
 
-    for timestep in range(seq_len):
-        new_input = np.zeros(x.shape)
-        new_input[timestep] = x[timestep]
-        mul_u = np.dot(U, new_input)
-        mul_w = np.dot(W, prev_activation)
-        _sum = mul_w + mul_u
-        activation = sigmoid(_sum)
-        mul_v = np.dot(V, activation)
-        timesteps_activations.append({'activation':activation,
-                                    'prev_activation': prev_activation})
-        prev_activation = activation
-    
-    return timesteps_activations, mul_u, mul_w, mul_v
-
-
-"""
-    x -> [Vector] Input for this data point
-    U -> [Matrix] Weights from the input layer to the hidden layer
-    V -> [Matrix] Weights from the hidden layer to the output Layer
-    W -> [Matrix] Recurrent weights from the hidden layer to itself
-    d_mul_v -> The differential for the last layer
-    mul_u -> The input value to the hidden layer
-    mul_w -> The input value to the hidden layer
-    timestep_actv -> The list of activations through timesteps
-"""
-def backprop(x, U, V, W, d_mul_v, mul_u, mul_w, timestep_actv):
-    
-    # First, set up the differential for each layer
-    dU = np.zeros(U.shape)
-    dV = np.zeros(V.shape)
-    dW = np.zeros(W.shape)
-
-    # Then, set up the differential for each layer in the timestep
-    dU_t = np.zeros(U.shape)
-    dV_t = np.zeros(V.shape)
-    dW_t = np.zeros(W.shape) 
-
-    # Next, we'll set up the differential for the truncated 
-    # backpropagation through time
-    dU_i = np.zeros(U.shape)
-    dW_i = np.zeros(W.shape) 
-
-    # Finally, we'll set up the input weights of the hidden layer as the most
-    # recent sum of the U and V matrix weight outputs and the differential of
-    # the last layer
-    _sum = mul_u + mul_w
-    d_s_v = np.dot(np.transpose(V), d_mul_v)
-
-    # We'll define to calculate the differential for the previous activation
-    # of the hidden layer.
-    def get_previous_activation_differential(_sum, ds, W):
-        d_sum = _sum * (1 - _sum) * ds
-        d_mul_w = d_sum * np.ones_like(ds)
-        return np.dot(np.transpose(W), d_mul_w)
-
-    # Next, we'll create the differential for this recurrent timestep by 
-    # getting the dot product of the hidden weights and the timestep's previous
-    # activation. After this, we'll do the same step we do in the forward pass
-    # by creating a new input for this recurrent timestep. This give us the
-    # differential for the input layer for this recurrent timestep. Finnaly, 
-    # we'll increment the differential values for the hidden layer and the 
-    # input layer with the differentials for the recurrent timestep.
-
-    for timestep in range(seq_len):
-
-        dV_t = np.dot(d_mul_v, 
-                    np.transpose(timestep_actv[timestep]['activation']))
-        ds = d_s_v
-        d_prev_activ = get_previous_activation_differential(_sum, ds, W)
-
-        for _ in range(timestep-1, max(-1, timestep-bptt_truncate-1), -1):
-            ds = d_s_v + d_prev_activ
-            d_prev_activ = get_previous_activation_differential(_sum, ds, W)
-            dW_i = np.dot(W, 
-                    timestep_actv[timestep]['prev_activation'])
+            Parameters:
+                x : np.array
+                    Input data point - expected shape:
+                    (sequence_len, data_point_len)
+                prev_activation : np.array, optional
+                    Activation of last data point
+                
+            Returns:
+                Y : np.array
+                    Prediction output array
             
+        '''
+        timestep_activations = []
+
+        if prev_activation is None:
+            prev_activation = np.zeros(self.V.shape[::-1])
+
+        for timestep in range(self.sequence_len):
             new_input = np.zeros(x.shape)
             new_input[timestep] = x[timestep]
-            dU_i = np.dot(U, new_input)
 
-            dU_t += dU_i
-            dW_t += dW_i
+            mul_u = np.dot(self.U, new_input)
+            mul_w = np.dot(self.W, prev_activation)
+            _sum = mul_w + mul_u
+            activation = sigmoid(_sum)
+            y_pred = np.dot(self.V, activation)
+
+            timestep_activations.append({'activation':activation,
+                            'prev_activation': prev_activation})
+            prev_activation = activation
         
-        dU += dU_t
-        dV += dV_t
-        dW += dW_t
+        return timestep_activations, mul_u, mul_w, y_pred
 
-        # take care of possible exploding gradients
+    def predict(self, X):
+        '''
+            Takes an input X and returns the output prediction Y_pred
 
-        if dU.max() > max_clip_val:
-            dU[dU > max_clip_val] = max_clip_val
-        if dV.max() > max_clip_val:
-            dV[dV > max_clip_val] = max_clip_val
-        if dW.max() > max_clip_val:
-            dW[dW > max_clip_val] = max_clip_val
+            Parameters:
+                X : np.array 
+                    Input array - expected shape:
+                    (num_samples, sequence_len, data_point_len)
+            Returns:
+                Y : np.array
+                    Prediction output array
+        '''
+        predictions = []
 
-        if dU.min() < min_clip_val:
-            dU[dU < min_clip_val] = min_clip_val
-        if dV.min() < min_clip_val:
-            dV[dV < min_clip_val] = min_clip_val
-        if dW.min() < min_clip_val:
-            dW[dW < min_clip_val] = min_clip_val
+        if len(X.shape) != 3:
+            raise Exception("Not expected input shape. Expected 3 got %d" % \
+                len(X.shape))
 
-    return dU, dV, dW
+        for i in range(X.shape[0]):
+            prev_activation = np.zeros(self.V.shape[::-1])
+
+            for timestep in range(self.sequence_len):
+                mul_u = np.dot(self.U, X[i])
+                mul_w = np.dot(self.W, prev_activation)
+                _sum = mul_u + mul_w
+
+                activation = sigmoid(_sum)
+                y_pred = np.dot(self.V, activation)
+                prev_activation = activation
+            
+            predictions.append(y_pred)
+
+        return np.array(predictions)
 
 
-# training model
-def train(U, V, W, X, Y, X_validation, Y_validation):
+    def backprop(self, x, y_error, mul_u, mul_w, timestep_actv):
+        """
+            Execute truncate backpropagation through time
 
-    for epoch in range(max_epochs):
-        # calculate initial loss, ie  what the output is given a random set of 
-        # weights
+            Parameters: 
+                x : np.array
+                    Input for this data point
+                y_error : float 
+                    The error for the last layer
+                mul_u : np.array 
+                    The input value to the hidden layer
+                mul_w : np.array
+                    The input value to the hidden layer
+                timestep_actv : list
+                    The list of activations through timesteps
+            Returns:
+                dU : np.array
+                    Gradients for weights from input to hidden layer
+                dV : np.array
+                    Gradients for weights from hidden to output layer
+                dW : np.array
+                    Gradients for recurrent weights for layer (RNN weigts)
+        """     
+        
+        # First, set up the differential for each layer
+        dU = np.zeros(self.U.shape)
+        dV = np.zeros(self.V.shape)
+        dW = np.zeros(self.W.shape)
 
-        loss, prev_activation = calculate_loss(X, Y, U, V, W)
+        # Then, set up the differential for each layer in the timestep
+        dU_t = np.zeros(self.U.shape)
+        dV_t = np.zeros(self.V.shape)
+        dW_t = np.zeros(self.W.shape)
 
-        # check validation loss 
-        val_loss, _ = calculate_loss(X_validation, Y_validation, U, V, W)
+        # Then, we'll set up the differential for the truncated 
+        # backpropagation through time
+        dU_i = np.zeros(self.U.shape)
+        dW_i = np.zeros(self.W.shape)
 
-        print(f'Epoch: {epoch+1}, Loss: {loss}, Validation Loss: {val_loss}')
+        # Finally, we'll set up the input weights of the hidden layer as the
+        # most recent sum of the U and V matrix weight outputs and the
+        # differential of the last layer
+        _sum = mul_u + mul_w
+        d_s_v = np.dot(self.V.T, y_error)
 
-        # train model/forward pass
-        for i in range(Y.shape[0]):
+        # Defining a function to calculate the differential for the previous
+        # activation of the hidden layer
+        def get_previous_activation_differential(_sum, ds, W):
+            d_sum = sigmoid_prime(_sum) * ds
+            d_mul_w = d_sum * np.ones_like(ds)
+            return np.dot(W.T, d_mul_w)
 
-            x, y = X[i], Y[i]
-            # Activation for each timestep
-            timestep_actv, mul_u, mul_w, mul_v = calc_timestep_activation(
-                x, U, V, W, prev_activation
+        # Next, we'll create the differential for this recurrent timestep by 
+        # getting the dot product of the hidden weights and the timestep's 
+        # previous activation. After this, we'll do the same step we do in the
+        # forward pass by creating a new input for this recurrent timestep. 
+        # This give us the differential for the input layer for this recurrent 
+        # timestep. Finnaly, we'll increment the differential values for the 
+        # hidden layer and the input layer with the differentials for the 
+        # recurrent timestep.
+
+        for timestep in range(self.sequence_len):
+
+            dV_t = np.dot(y_error, timestep_actv[timestep]['activation'].T)            
+            ds = d_s_v
+            d_prev_activ = get_previous_activation_differential(
+                _sum, ds, self.W
             )
 
-            # difference of the prediction
-            d_mul_v = mul_v - y
-            dU, dV, dW = backprop(x, U, V, W, d_mul_v, mul_u, mul_w, timestep_actv)
+            for _ in range(timestep-1, max(-1, timestep-self.bptt_truncate-1), -1):
+                ds = d_s_v + d_prev_activ
+                d_prev_activ = get_previous_activation_differential(
+                    _sum, ds, self.W
+                    )
+                dW_i = np.dot(self.W, timestep_actv[timestep]['prev_activation'])
 
-            # update weights
-            U -= learning_rate * dU
-            V -= learning_rate * dV
-            W -= learning_rate * dW
+                new_input = np.zeros(x.shape)
+                new_input[timestep] = x[timestep]
+                dU_i = np.dot(self.U, new_input)
 
-    return U, V, W
+                dU_t += dU_i
+                dW_t += dW_i
 
+            dU += dU_t
+            dV += dV_t
+            dW += dW_t
 
+            # take care of possible exploding gradients
 
+            if dU.max() > self.max_clip_val:
+                dU[dU > self.max_clip_val] = self.max_clip_val
+            if dV.max() > self.max_clip_val:
+                dV[dV > self.max_clip_val] = self.max_clip_val
+            if dW.max() > self.max_clip_val:
+                dW[dW > self.max_clip_val] = self.max_clip_val
 
+            if dU.min() < self.min_clip_val:
+                dU[dU < self.min_clip_val] = self.min_clip_val
+            if dV.min() < self.min_clip_val:
+                dV[dV < self.min_clip_val] = self.min_clip_val
+            if dW.min() < self.min_clip_val:
+                dW[dW < self.min_clip_val] = self.min_clip_val
 
+        return dU, dV, dW
+
+    def calculate_loss(self, X, Y):
+        '''
+            Calculate loss for entire dataset
+
+            Parameters:
+                X : np.array 
+                    Input array - expected shape:
+                    (num_samples, sequence_len, data_point_len)
+                Y : np.array
+                    Output array - expected shape:
+                    (num_samples, data_point_len)
+            Returns:
+                loss : float
+                    Loss value
+                activation : np.array
+                    Activation for last layer
+        '''
+        loss = 0.0
+
+        for i in range(X.shape[0]):
+            x, y = X[i], Y[i]
+            timestep_activations, _, _, y_pred = self.forward(x)
+
+            loss += squared_error(y, y_pred)
+        
+        return loss, timestep_activations[-1]['activation']
     
+    def fit(self, X, Y, epochs, X_validation=None, Y_validation=None, lr = 0.0001):
+        '''
+            Train the model, adjusts the weights.
+            
+            Parameters:
+                X : np.array 
+                    Input array - expected shape:
+                    (num_samples, sequence_len, data_point_len)
+                Y : np.array
+                    Output array - expected shape:
+                    (num_samples, data_point_len)
+            
+        '''
+
+        for epoch in range(epochs):
+            loss, prev_activation = self.calculate_loss(X, Y)
+
+            # check validation loss 
+            if X_validation is not None and Y_validation is not None:
+                val_loss, _ = self.calculate_loss(X_validation, Y_validation)
+                print(f'Epoch: {epoch+1}, Loss: {loss}, Validation Loss: {val_loss}')
+            else:
+                print(f'Epoch: {epoch+1}, Loss: {loss}')
+
+            for i in range(X.shape[0]):
+
+                x, y = X[i], Y[i]
+                timestep_actv, mul_u, mul_w, y_pred = self.forward(x, 
+                                                prev_activation=prev_activation)
+
+                error = y_pred - y 
+                
+                dU, dV, dW = self.backprop(x,error,mul_u,mul_w,timestep_actv)
+
+                # update weights
+                self.U -= lr * dU
+                self.V -= lr * dV
+                self.W -= lr * dW
+            
+
+
+        
+
+
+
+
+
+
