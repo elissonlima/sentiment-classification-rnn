@@ -8,7 +8,7 @@ from rnn import RNN
 
 def build_dataset(sequence_len):   
 
-    sin_wave = np.array([math.sin(x) for x in range(200)])
+    sin_wave = np.array([math.cos(x) for x in range(200)])
 
     #training data
     X = []
